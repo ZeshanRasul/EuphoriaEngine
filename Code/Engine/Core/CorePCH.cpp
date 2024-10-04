@@ -1,0 +1,61 @@
+#include <Core/CorePCH.h>
+
+PL_STATICLINK_LIBRARY(Core)
+{
+  if (bReturn)
+    return;
+
+  PL_STATICLINK_REFERENCE(Core_ActorSystem_Implementation_Actor);
+  PL_STATICLINK_REFERENCE(Core_ActorSystem_Implementation_ActorApiService);
+  PL_STATICLINK_REFERENCE(Core_ActorSystem_Implementation_ActorManager);
+  PL_STATICLINK_REFERENCE(Core_ActorSystem_Implementation_ActorPlugin);
+  PL_STATICLINK_REFERENCE(Core_ActorSystem_Implementation_ActorPluginWindow);
+  PL_STATICLINK_REFERENCE(Core_Collection_Implementation_CollectionComponent);
+  PL_STATICLINK_REFERENCE(Core_Collection_Implementation_CollectionResource);
+  PL_STATICLINK_REFERENCE(Core_Configuration_Implementation_PlatformProfile);
+  PL_STATICLINK_REFERENCE(Core_Curves_Implementation_ColorGradientResource);
+  PL_STATICLINK_REFERENCE(Core_Curves_Implementation_Curve1DResource);
+  PL_STATICLINK_REFERENCE(Core_GameApplication_Implementation_GameApplicationBase);
+  PL_STATICLINK_REFERENCE(Core_GameState_Implementation_ForwardEventsToGameStateComponent);
+  PL_STATICLINK_REFERENCE(Core_GameState_Implementation_GameStateBase);
+  PL_STATICLINK_REFERENCE(Core_Graphics_Implementation_Camera);
+  PL_STATICLINK_REFERENCE(Core_Input_DeviceTypes_DeviceTypes);
+  PL_STATICLINK_REFERENCE(Core_Input_Implementation_InputDevice);
+  PL_STATICLINK_REFERENCE(Core_Input_Implementation_Startup);
+  PL_STATICLINK_REFERENCE(Core_Input_Implementation_VirtualThumbStick);
+  PL_STATICLINK_REFERENCE(Core_Interfaces_NavmeshGeoWorldModule);
+  PL_STATICLINK_REFERENCE(Core_Interfaces_PhysicsWorldModule);
+  PL_STATICLINK_REFERENCE(Core_Interfaces_WindWorldModule);
+  PL_STATICLINK_REFERENCE(Core_Messages_Implementation_ApplyOnlyToMessage);
+  PL_STATICLINK_REFERENCE(Core_Messages_Implementation_EventMessage);
+  PL_STATICLINK_REFERENCE(Core_Messages_Implementation_Messages);
+  PL_STATICLINK_REFERENCE(Core_Messages_Implementation_SetColorMessage);
+  PL_STATICLINK_REFERENCE(Core_Physics_Implementation_SurfaceResource);
+  PL_STATICLINK_REFERENCE(Core_Physics_Implementation_SurfaceResourceDescriptor);
+  PL_STATICLINK_REFERENCE(Core_Platform_Web_InputDevice_Web);
+  PL_STATICLINK_REFERENCE(Core_Prefabs_Implementation_PrefabReferenceComponent);
+  PL_STATICLINK_REFERENCE(Core_Prefabs_Implementation_PrefabResource);
+  PL_STATICLINK_REFERENCE(Core_ResourceManager_Implementation_Resource);
+  PL_STATICLINK_REFERENCE(Core_ResourceManager_Implementation_ResourceManager);
+  PL_STATICLINK_REFERENCE(Core_Scripting_Implementation_ScriptAttributes);
+  PL_STATICLINK_REFERENCE(Core_Scripting_Implementation_ScriptClassResource);
+  PL_STATICLINK_REFERENCE(Core_Scripting_Implementation_ScriptComponent);
+  PL_STATICLINK_REFERENCE(Core_Scripting_Implementation_ScriptCoroutine);
+  PL_STATICLINK_REFERENCE(Core_Scripting_Implementation_ScriptWorldModule);
+  PL_STATICLINK_REFERENCE(Core_Scripting_ScriptClasses_Implementation_ScriptCoroutine_MoveTo);
+  PL_STATICLINK_REFERENCE(Core_Scripting_ScriptClasses_Implementation_ScriptCoroutine_TweenProperty);
+  PL_STATICLINK_REFERENCE(Core_Scripting_ScriptClasses_Implementation_ScriptCoroutine_Wait);
+  PL_STATICLINK_REFERENCE(Core_Scripting_ScriptClasses_Implementation_ScriptExtensionClass_Log);
+  PL_STATICLINK_REFERENCE(Core_Utils_Implementation_Blackboard);
+  PL_STATICLINK_REFERENCE(Core_Utils_Implementation_IntervalScheduler);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_Component);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_ComponentManager);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_Declarations);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_EventMessageHandlerComponent);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_GameObject);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_SettingsComponent);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_SpatialSystem);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_SpatialSystem_RegularGrid);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_World);
+  PL_STATICLINK_REFERENCE(Core_World_Implementation_WorldModule);
+}

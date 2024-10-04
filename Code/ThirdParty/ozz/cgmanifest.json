@@ -1,0 +1,13 @@
+{
+  "Registrations": [
+    {
+      "component": {
+        "type": "git",
+        "git": {
+          "repositoryUrl": "https://github.com/guillaumeblanc/ozz-animation",
+          "commitHash": "e1a871d86e1f0728950b0c4a00634abe8bbc4d38"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,172 @@
+[PLATFORMS]
+ALL
+
+[PERMUTATIONS]
+SHADING_QUALITY = SHADING_QUALITY_NORMAL
+
+[COMPUTESHADER]
+
+#include <Shaders/Common/Common.h>
+#include <Shaders/Common/GlobalConstants.h>
+#include <Shaders/Common/CameraConstantsAccess.h>
+#include <Shaders/Pipeline/PostprocessConstants.h>
+#include <Shaders/Pipeline/SSR/SSRConstants.h>
+#include <Shaders/Pipeline/SSRAdvanced/SSR.h>
+#include <Shaders/Common/BRDF.h>
+
+Texture2D depthTexture;
+Texture2D materialTexture;
+Texture2D<float4> rayIndirectSpecular;
+Texture2D<float4> rayDirectionPDF;
+Texture2D<float> rayLengths;
+
+RWTexture2D<float4> resolveOutput;
+RWTexture2D<float> resolveVarianceOutput;
+RWTexture2D<float> reprojectionDepthOutput;
+
+static const float2 ResolveSpatialSizeMinMax = float2(2.0, 8.0);
+static const uint ResolveSpatialReconstructionCount = 4.0f;
+
+float GetWeight(int2 neighborTracingCoord, float3 V, float3 N, float roughness, float NdotV)
+{
+  // Sample local pixel information
+  float4 rayDirectionPDFSample = rayDirectionPDF[neighborTracingCoord];
+  float3 rayDirection = rayDirectionPDFSample.rgb;
+  float PDF = rayDirectionPDFSample.a;
+
+  float3 sampleL = normalize(rayDirection);
+  float3 sampleH = normalize(sampleL + V);
+
+  float sampleNdotH = saturate(dot(N, sampleH));
+  float sampleNdotL = saturate(dot(N, sampleL));
+
+  float roughnessBRDF = sqr(clamp(roughness, RoughnessCutoff, 1));
+
+  float Vis = VisibilitySmithCorrelated(roughnessBRDF, NdotV, sampleNdotL);
+  float D = SpecularGGX(roughnessBRDF, sampleNdotH);
+  float localBRDF = Vis * D * sampleNdotL;
+
+  float weight =  max(PDF, 0.00001f);
+
+  return weight;
+}
+
+void GetWeightedVariance(float4 sampleColor, float weight, float weightSum, inout float mean, inout float S)
+{
+  float luminance = GetLuminance(sampleColor.rgb);
+  float oldMean = mean;
+  mean += weight / weightSum * (luminance - oldMean);
+  S += weight * (luminance - oldMean) * (luminance - mean);
+}
+
+inline float2 hammersley2d_random(uint idx, uint num, uint2 random)
+{
+  uint bits = idx;
+  bits = (bits << 16u) | (bits >> 16u);
+  bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+  bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+  bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+  bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+  const float radicalInverse_VdC = float(bits ^ random.y) * 2.3283064365386963e-10; // / 0x100000000
+
+  // ... & 0xffff) / (1 << 16): limit to 65536 then range 0 - 1
+  return float2(frac(float(idx) / float(num) + float(random.x & 0xffff) / (1 << 16)), radicalInverse_VdC); // frac since we only want range [0; 1[
+}
+
+uint baseHash(uint3 p)
+{
+  p = 1103515245u * ((p.xyz >> 1u) ^ (p.yzx));
+  uint h32 = 1103515245u * ((p.x ^ p.z) ^ (p.y >> 3u));
+  return h32 ^ (h32 >> 16);
+}
+
+// Great quality hash with 3D input
+// based on: https://www.shadertoy.com/view/Xt3cDn
+uint3 hash33(uint3 x)
+{
+  uint n = baseHash(x);
+  return uint3(n, n * 16807u, n * 48271u); //see: http://random.mat.sbg.ac.at/results/karl/server/node4.html
+}
+
+inline float ComputeInverseLineardepth(in float lin, in float near, in float far)
+{
+  float z_n = ((lin - 2 * far) * near + far * lin) / (lin * near - far * lin);
+  float z = (z_n + 1) / 2;
+  return z;
+}
+
+[numthreads(POSTPROCESS_BLOCKSIZE, POSTPROCESS_BLOCKSIZE, 1)]
+void main(uint3 DTid : SV_DispatchThreadID)
+{
+  const float2 uv = (DTid.xy + 0.5f) * resolution.zw;
+
+  const float depth = depthTexture[DTid.xy * 2];
+  const float roughness = materialTexture[DTid.xy * 2].a;
+
+  if (!NeedReflection(roughness, depth, RoughnessCutoff))
+  {
+    resolveOutput[DTid.xy] = rayIndirectSpecular[DTid.xy];
+    resolveVarianceOutput[DTid.xy] = 0.0;
+    reprojectionDepthOutput[DTid.xy] = 0.0;
+    return;
+  }
+
+
+  const float3 N = materialTexture[DTid.xy * 2].xyz;
+  const float3 P = ScreenCoordToWorldSpace(uv, depth);
+  const float3 V = normalize(GetCameraPosition() - P);
+  const float NdotV = saturate(dot(N, V));
+
+  const float resolveSpatialScale = saturate(roughness * 5.0); // roughness 0.2 is destination
+  const float2 resolveSpatialSize = lerp(ResolveSpatialSizeMinMax.x, ResolveSpatialSizeMinMax.y, resolveSpatialScale);
+
+  float4 result = 0.0f;
+  float weightSum = 0.0f;
+
+  float mean = 0.0f;
+  float S = 0.0f;
+
+  float closestRayLength = 0.0f;
+
+  const uint sampleCount = ResolveSpatialReconstructionCount;
+  const uint2 random = hash33(uint3(DTid.xy, Frame)).xy; // TODO: change 1 to Frame when temporal stage fixed
+
+  for (int i = 0; i < sampleCount; i++)
+  {
+    float2 offset = (hammersley2d_random(i, sampleCount, random) - 0.5) * resolveSpatialSize;
+
+    int2 neighborCoord = DTid.xy + offset;
+
+    float neighborDepth = depthTexture[neighborCoord * 2];
+    if (neighborDepth > 0.0)
+    {
+      float weight = GetWeight(neighborCoord, V, N, roughness, NdotV);
+
+      float4 sampleColor = rayIndirectSpecular[neighborCoord];
+      sampleColor.rgb *= rcp(1 + GetLuminance(sampleColor.rgb));
+
+      result += sampleColor * weight;
+      weightSum += weight;
+
+      GetWeightedVariance(sampleColor, weight, weightSum, mean, S);
+
+     if (weight > 0.001)
+      {
+        float neighborRayLength = rayLengths[neighborCoord];
+        closestRayLength = max(closestRayLength, neighborRayLength);
+      }
+    }
+  }
+
+  result /= weightSum;
+  result.rgb *= rcp(1 - GetLuminance(result.rgb));
+
+  float resolveVariance = S / weightSum;
+
+  const float lineardepth = LinearizeZBufferDepth(depthTexture[DTid.xy * 2]);
+  float reprojectionDepth = ComputeInverseLineardepth(lineardepth + closestRayLength, ClipPlanes.x, ClipPlanes.y);
+
+  resolveOutput[DTid.xy] = max(result, 0.00001f);
+  resolveVarianceOutput[DTid.xy] = resolveVariance;
+  reprojectionDepthOutput[DTid.xy] = reprojectionDepth;
+}

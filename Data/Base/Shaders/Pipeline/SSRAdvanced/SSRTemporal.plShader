@@ -1,0 +1,249 @@
+[PLATFORMS]
+ALL
+
+[PERMUTATIONS]
+SHADING_QUALITY = SHADING_QUALITY_NORMAL
+
+[COMPUTESHADER]
+
+#include <Shaders/Common/Common.h>
+#include <Shaders/Common/GlobalConstants.h>
+#include <Shaders/Common/CameraConstantsAccess.h>
+#include <Shaders/Pipeline/PostprocessConstants.h>
+#include <Shaders/Pipeline/SSR/SSRConstants.h>
+#include <Shaders/Pipeline/SSRAdvanced/SSR.h>
+
+Texture2D<float4> ssrTexture;
+Texture2D<float4> ssrPrevTexture;
+Texture2D<float4> materialTexture;
+Texture2D<float4> velocityTexture;
+Texture2D varianceTexture;
+Texture2D<float> prevVarianceTexture;
+Texture2D<float> reprojectionDepthTexture;
+Texture2D depthTexture;
+Texture2D depthHistoryTexture;
+
+RWTexture2D<float4> ssrOutput;
+RWTexture2D<float> ssrVarianceOutput;
+
+static const float temporalResponse = 0.95;
+static const float temporalScale = 2.0;
+static const float disocclusionDepthWeight = 1.0f;
+static const float disocclusionThreshold = 0.9f;
+static const float varianceTemporalResponse = 0.9f;
+
+float2 CalculateReprojectionBuffer(float2 uv, float depth)
+{
+  float2 screenPosition = uv * 2.0 - 1.0;
+  screenPosition.y *= -1;
+
+  float4 thisClip = float4(screenPosition, depth, 1);
+
+  float4 prevClip = mul(GetLastWorldToScreenMatrix(), thisClip);
+  prevClip = mul(GetLastWorldToScreenMatrix(), prevClip);
+
+  float2 prevScreen = prevClip.xy / prevClip.w;
+
+  float2 screenVelocity = screenPosition - prevScreen;
+  float2 prevScreenPosition = screenPosition - screenVelocity;
+
+  return prevScreenPosition * float2(0.5, -0.5) + 0.5;
+}
+
+float GetDisocclusion(float depth, float depthHistory)
+{
+  float lineardepthCurrent = LinearizeZBufferDepth(depth);
+  float lineardepthHistory = LinearizeZBufferDepth(depthHistory);
+
+  float disocclusion = 1.0
+                       //* exp(-abs(1.0 - max(0.0, dot(normal, normalHistory))) * disocclusionNormalWeight) // Potential normal check if necessary
+                       * exp(-abs(lineardepthHistory - lineardepthCurrent) / lineardepthCurrent * disocclusionDepthWeight);
+
+  return disocclusion;
+}
+
+float4 SamplePreviousColor(float2 prevUV, float2 size, float depth, out float disocclusion, out float2 prevUVSample)
+{
+  prevUVSample = prevUV;
+
+  float4 previousColor = ssrPrevTexture.SampleLevel(LinearClampSampler, prevUVSample, 0);
+  float previousDepth = depthHistoryTexture.SampleLevel(LinearClampSampler, prevUVSample, 0);
+
+  disocclusion = GetDisocclusion(depth, previousDepth);
+  if (disocclusion > disocclusionThreshold) // Good enough
+  {
+    return previousColor;
+  }
+
+  // Try to find the closest sample in the vicinity if we are not convinced of a disocclusion
+  if (disocclusion < disocclusionThreshold)
+  {
+    float2 closestUV = prevUVSample;
+    float2 dudv = rcp(size);
+
+    const int searchRadius = 1;
+    for (int y = -searchRadius; y <= searchRadius; y++)
+    {
+      for (int x = -searchRadius; x <= searchRadius; x++)
+      {
+        int2 offset = int2(x, y);
+        float2 sampleUV = prevUVSample + offset * dudv;
+
+        float samplePreviousDepth = depthHistoryTexture.SampleLevel(PointClampSampler, sampleUV, 0);
+
+        float weight = GetDisocclusion(depth, samplePreviousDepth);
+        if (weight > disocclusion)
+        {
+          disocclusion = weight;
+          closestUV = sampleUV;
+          prevUVSample = closestUV;
+        }
+      }
+    }
+
+    previousColor = ssrPrevTexture.SampleLevel(LinearClampSampler, prevUVSample, 0);
+  }
+
+  // Bilinear interpolation on fallback - near edges
+  if (disocclusion < disocclusionThreshold)
+  {
+    float2 weight = frac(prevUVSample * size + 0.5);
+
+    // Bilinear weights
+    float weights[4] =
+      {
+        (1 - weight.x) * (1 - weight.y),
+        weight.x * (1 - weight.y),
+        (1 - weight.x) * weight.y,
+        weight.x * weight.y
+      };
+
+    float4 previousColorResult = 0;
+    float previousDepthResult = 0;
+    float weightSum = 0;
+
+    uint2 prevCoord = uint2(size * prevUVSample - 0.5);
+    uint2 offsets[4] = { uint2(0, 0), uint2(1, 0), uint2(0, 1), uint2(1, 1) };
+
+    for (uint i = 0; i < 4; i++)
+    {
+      uint2 sampleCoord = prevCoord + offsets[i];
+
+      previousColorResult += weights[i] * ssrPrevTexture[sampleCoord];
+      previousDepthResult += weights[i] * depthHistoryTexture[sampleCoord];
+
+      weightSum += weights[i];
+    }
+
+    previousColorResult /= max(weightSum, 0.00001);
+    previousDepthResult /= max(weightSum, 0.00001);
+
+    previousColor = previousColorResult;
+    disocclusion = GetDisocclusion(depth, previousDepthResult);
+  }
+
+  disocclusion = disocclusion < disocclusionThreshold ? 0.0 : disocclusion;
+  return previousColor;
+}
+
+
+[numthreads(POSTPROCESS_BLOCKSIZE, POSTPROCESS_BLOCKSIZE, 1)]
+void main(uint3 Gid : SV_GroupID, uint3 GTid : SV_GroupThreadID, uint3 DTid : SV_DispatchThreadID)
+{
+  if ((uint) Frame  == 0)
+  {
+      ssrOutput[DTid.xy] = ssrTexture[DTid.xy];
+    return;
+  }
+
+  const float depth = depthTexture[DTid.xy * 2];
+  const float roughness = materialTexture[DTid.xy * 2].a;
+
+  if (!NeedReflection(roughness, depth, RoughnessCutoff))
+  {
+    ssrOutput[DTid.xy] = ssrTexture[DTid.xy];
+    ssrVarianceOutput[DTid.xy] = 0.0;
+    return;
+  }
+
+  float4 m1 = 0.0;
+  float4 m2 = 0.0;
+  for (int x = -1; x <= 1; x++)
+  {
+    for (int y = -1; y <= 1; y++)
+    {
+      int2 offset = int2(x, y);
+      int2 coord = DTid.xy + offset;
+
+      float4 sampleColor = ssrTexture[coord];
+
+      m1 += sampleColor;
+      m2 += sampleColor * sampleColor;
+    }
+  }
+
+  float4 mean = m1 / 9.0;
+  float4 variance = (m2 / 9.0) - (mean * mean);
+  float4 stddev = sqrt(max(variance, 0.0f));
+
+  // Secondary reprojection based on ray lengths:
+  //	https://www.ea.com/seed/news/seed-dd18-presentation-slides-raytracing (Slide 45)
+
+  float2 velocity = velocityTexture[DTid.xy * 2].xy;
+  float reprojectionDepth = reprojectionDepthTexture[DTid.xy];
+
+  float2 uv = (DTid.xy + 0.5f) * resolution.yz;
+
+  float2 prevUVVelocity = uv - velocity;
+
+  float4 previousColorVelocity = velocityTexture.SampleLevel(LinearClampSampler, prevUVVelocity, 0);
+  float4 previousColorReflectionHit = ssrPrevTexture.SampleLevel(LinearClampSampler, prevUVVelocity, 0);
+
+  float previousDistanceVelocity = abs(GetLuminance(previousColorVelocity.rgb) - GetLuminance(mean.rgb));
+
+  float2 prevUV = prevUVVelocity;
+
+  float disocclusion = 0.0;
+  float2 prevUVSample = 0.0;
+  float4 previousColor = SamplePreviousColor(prevUV, resolution.xy, depth, disocclusion, prevUVSample);
+
+  float4 currentColor = ssrTexture[DTid.xy];
+  float4 resultColor = currentColor;
+  if(Frame > 0)
+  {
+   resultColor =  lerp(currentColor, previousColor, 0.5);
+  }
+//  // Disocclusion fallback: color
+  if (disocclusion > disocclusionThreshold && is_saturated(prevUVSample))
+  {
+    // Color box clamp
+    float4 colorMin = mean - temporalScale * stddev;
+    float4 colorMax = mean + temporalScale * stddev;
+    previousColor = clamp(previousColor, colorMin, colorMax);
+
+    resultColor = lerp(currentColor, previousColor, temporalResponse);
+  }
+#if 0 // Debug
+	else
+	{
+		resultColor = float4(1.0f, 0.0f, 0.0f, 1.0f);
+	}
+#endif
+
+  float currentVariance = varianceTexture[DTid.xy];
+  float varianceResponse = varianceTemporalResponse;
+
+  // Disocclusion fallback: variance
+  if (disocclusion < disocclusionThreshold || !is_saturated(prevUVSample))
+  {
+    // Apply white for variance on occlusion. This helps to hide artifacts from temporal
+    varianceResponse = 0.0f;
+    currentVariance = 1.0f;
+  }
+
+  float previousVariance = prevVarianceTexture.SampleLevel(LinearClampSampler, prevUVSample, 0);
+  float resultVariance = lerp(currentVariance, previousVariance, varianceResponse);
+
+  ssrOutput[DTid.xy] = max(0, resultColor);
+  ssrVarianceOutput[DTid.xy] = max(0, resultVariance);
+}

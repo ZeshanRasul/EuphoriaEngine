@@ -1,0 +1,74 @@
+[PLATFORMS]
+ALL
+
+[PERMUTATIONS]
+SHADING_QUALITY = SHADING_QUALITY_NORMAL
+
+[COMPUTESHADER]
+
+#include <Shaders/Common/Common.h>
+#include <Shaders/Common/GlobalConstants.h>
+#include <Shaders/Pipeline/SSR/SSRConstants.h>
+#include <Shaders/Pipeline/BlurConstants.h>
+
+Texture2D InputTexture;
+Texture2D MaterialTexture;
+RWTexture2D<float4> Output;
+
+float2 adjust_sample_uv(const float2 uv, const float2 direction)
+{
+  // during the vertical pass, the input texture is secondary scratch texture which belongs to the blur pass
+  // it's at least as big as the original input texture (to be blurred), so we have to adapt the sample uv
+  return lerp(uv, (trunc(uv * ViewportSize.xy) + 0.5f) / ViewportSize.xy, direction.y != 0.0f);
+}
+
+float compute_gaussian_weight(int sample_distance, const float sigma2)
+{
+  float g = 1.0f / sqrt(PI2 * sigma2);
+  return (g * exp(-(sample_distance * sample_distance) / (2.0f * sigma2)));
+}
+
+float3 gaussian_blur(const uint2 pos, const float2 uv, const float radius, const float sigma2)
+{
+  const float2 texel_size = 1.0f / ViewportSize.xy;
+  float3 color  = 0.0f;
+  float weights = 0.0f;
+  for (int i = -radius; i < radius; i++)
+  {
+    {
+      const float2 direction = float2(1.0f, 0.0f) * texel_size;
+      float2 sample_uv = uv + (i * 10  * direction);
+      float weight = compute_gaussian_weight(i, sigma2);
+      color += InputTexture.SampleLevel(LinearClampSampler, adjust_sample_uv(sample_uv, direction), 0).rgb * weight;
+      weights += weight;
+    }
+    {
+      const float2 direction = float2(0.0f, 1.0f) * texel_size;
+      float2 sample_uv = uv + (i * 10  * direction);
+      float weight = compute_gaussian_weight(i, sigma2);
+      color += InputTexture.SampleLevel(LinearClampSampler, adjust_sample_uv(sample_uv, direction), 0).rgb * weight;
+      weights += weight;
+    }
+  }
+
+  return color / weights;
+}
+
+[numthreads(POSTPROCESS_BLOCKSIZE, POSTPROCESS_BLOCKSIZE, 1)]
+void main(uint3 thread_id : SV_DispatchThreadID)
+{
+
+
+  float roughness = MaterialTexture[thread_id.xy].w;
+
+  const float radius      =  22.0f;
+  const float sigma       = radius / 3.0f;
+  const float2 uv         = (thread_id.xy + 0.5f) / ViewportSize.xy;
+
+  float3 color = gaussian_blur(thread_id.xy, uv, radius, sigma * sigma);
+  float alpha = InputTexture[thread_id.xy].w;
+
+
+  // Write the blurred color to the output image
+  Output[thread_id.xy] = float4(saturate_16(color), 1.0f);
+}

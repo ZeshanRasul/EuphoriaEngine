@@ -1,0 +1,363 @@
+[PLATFORMS]
+ALL
+
+[PERMUTATIONS]
+
+BLEND_MODE
+RENDER_PASS
+SHADING_MODE
+TWO_SIDED
+FLIP_WINDING
+FORWARD_PASS_WRITE_DEPTH
+MSAA
+CAMERA_MODE
+SHADING_QUALITY
+VERTEX_SKINNING
+VERTEX_SHADER_RENDER_TARGET_ARRAY_INDEX
+GAMEOBJECT_VELOCITY
+
+[MATERIALPARAMETER]
+
+Permutation BLEND_MODE;
+Permutation SHADING_MODE;
+Permutation TWO_SIDED;
+
+float2 Scale @Default(float2(1.0,1.0));
+
+float BlurSamples @Default(20.0) @Clamp(0.0, 50.0) @Group("Glass");
+float BlurMultiplier @Default(40.0) @Clamp(0.0, 100.0);
+float FresnelStrength @Default(1.0);
+float RefractionIoR @Default(1.5);
+float RefractionThickness @Default(1.0);
+bool UseExistingOpacityInRefraction @Default(false);
+float RefractionOpacity @Default(1.0);
+Color RefractionColor @Default(Color(1.0, 1.0, 1.0));
+
+Color BaseColor @Default(Color(1.0, 1.0, 1.0)) @Group("Albedo");
+bool UseBaseTexture;
+Texture2D BaseTexture;
+
+float MaskThreshold @Default(0.25);
+
+bool UseNormalTexture @Group("Normal");
+Texture2D NormalTexture;
+
+bool InvertOcclusion @Group("Occlusion");
+bool UseOcclusionTexture;
+Texture2D OcclusionTexture;
+
+float RoughnessValue @Default(0.7) @Clamp(0.0, 2.0) @Group("Roughness");
+bool UseRoughnessTexture;
+Texture2D RoughnessTexture;
+
+float MetallicValue @Default(0.0) @Clamp(0.0, 2.0) @Group("Metallic");
+bool UseMetallicTexture;
+Texture2D MetallicTexture;
+
+bool UseRMATexture @Group("Packed Data");
+bool UseORMTexture;
+Texture2D OrmTexture;
+
+Color EmissiveColor @Default(Color(0.0, 0.0, 0.0)) @Group("Emissive");
+bool UseEmissiveTexture;
+Texture2D EmissiveTexture;
+
+[MATERIALCONFIG]
+
+#include <Shaders/Materials/MaterialConfig.h>
+
+[RENDERSTATE]
+
+#include <Shaders/Materials/MaterialState.h>
+
+[SHADER]
+
+#include <Shaders/Common/GlobalConstants.h>
+
+CONSTANT_BUFFER(plMaterialConstants, 1)
+{
+  COLOR4F(BaseColor);
+  COLOR4F(EmissiveColor);
+  COLOR4F(RefractionColor);
+  FLOAT2(Scale);
+  FLOAT1(MetallicValue);
+  FLOAT1(ReflectanceValue);
+  FLOAT1(RoughnessValue);
+  FLOAT1(MaskThreshold);
+  FLOAT1(BlurSamples);
+  FLOAT1(BlurMultiplier);
+  FLOAT1(FresnelStrength);
+  FLOAT1(RefractionIoR);
+  FLOAT1(RefractionThickness);
+  FLOAT1(RefractionOpacity);
+  BOOL1(UseBaseTexture);
+  BOOL1(UseNormalTexture);
+  BOOL1(UseRoughnessTexture);
+  BOOL1(UseMetallicTexture);
+  BOOL1(UseEmissiveTexture);
+  BOOL1(UseOcclusionTexture);
+  BOOL1(UseORMTexture);
+  BOOL1(UseRMATexture);
+  BOOL1(InvertOcclusion);
+  BOOL1(UseExistingOpacityInRefraction);
+};
+
+[VERTEXSHADER]
+
+#define USE_NORMAL
+#define USE_TANGENT
+#define USE_TEXCOORD0
+
+#if GAMEOBJECT_VELOCITY
+  #define USE_VELOCITY
+#endif
+
+#if VERTEX_SKINNING
+  #define USE_SKINNING
+#endif
+
+#if RENDER_PASS == RENDER_PASS_EDITOR
+  #define USE_DEBUG_INTERPOLATOR
+#endif
+
+#include <Shaders/Materials/MaterialVertexShader.h>
+
+VS_OUT main(VS_IN Input)
+{
+  return FillVertexData(Input);
+}
+
+
+[GEOMETRYSHADER]
+
+#define USE_NORMAL
+#define USE_TANGENT
+#define USE_TEXCOORD0
+
+#if GAMEOBJECT_VELOCITY
+  #define USE_VELOCITY
+#endif
+
+#if VERTEX_SKINNING
+  #define USE_SKINNING
+#endif
+
+#if RENDER_PASS == RENDER_PASS_EDITOR
+  #define USE_DEBUG_INTERPOLATOR
+#endif
+
+#include <Shaders/Materials/MaterialStereoGeometryShader.h>
+
+
+[PIXELSHADER]
+
+#define USE_NORMAL
+#define USE_TANGENT
+#define USE_TEXCOORD0
+#define USE_SIMPLE_MATERIAL_MODEL
+#define USE_MATERIAL_EMISSIVE
+#define USE_MATERIAL_OCCLUSION
+#define USE_TWO_SIDED_LIGHTING
+#define USE_DECALS
+#define USE_FOG
+#define USE_TRANSPARENT_BLUR
+#define USE_MATERIAL_REFRACTION
+
+#if GAMEOBJECT_VELOCITY
+  #define USE_VELOCITY
+#endif
+
+#if RENDER_PASS == RENDER_PASS_EDITOR
+  #define USE_DEBUG_INTERPOLATOR
+#endif
+
+#include <Shaders/Materials/MaterialPixelShader.h>
+
+Texture2D BaseTexture;
+SamplerState BaseTexture_AutoSampler;
+
+Texture2D NormalTexture;
+SamplerState NormalTexture_AutoSampler;
+
+Texture2D MetallicTexture;
+SamplerState MetallicTexture_AutoSampler;
+
+Texture2D RoughnessTexture;
+SamplerState RoughnessTexture_AutoSampler;
+
+Texture2D EmissiveTexture;
+SamplerState EmissiveTexture_AutoSampler;
+
+Texture2D OcclusionTexture;
+SamplerState OcclusionTexture_AutoSampler;
+
+Texture2D OrmTexture;
+SamplerState OrmTexture_AutoSampler;
+
+float3 GetNormal()
+{
+  [branch]
+  if (UseNormalTexture)
+  {
+    float3 normalTS = DecodeNormalTexture(NormalTexture.Sample(NormalTexture_AutoSampler, G.Input.TexCoord0.xy * Scale));
+    return TangentToWorldSpace(normalTS);
+  }
+  else
+  {
+    return G.Input.Normal;
+  }
+}
+
+float3 GetBaseColor()
+{
+  float3 baseColor = BaseColor.rgb * GetInstanceData().Color.rgb;
+
+  // note that the default material actually doesn't support per-vertex colors
+#if defined(USE_COLOR0)
+  baseColor *= G.Input.Color0;
+#endif
+
+  [branch]
+  if (UseBaseTexture)
+  {
+    baseColor *= BaseTexture.Sample(BaseTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).rgb;
+  }
+
+  return baseColor;
+}
+
+float GetMetallic()
+{
+  [branch]
+  if (UseRMATexture)
+  {
+    return MetallicValue * OrmTexture.Sample(OrmTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).g;
+  }
+  else if (UseORMTexture)
+  {
+    return MetallicValue * OrmTexture.Sample(OrmTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).b;
+  }
+  else if (UseMetallicTexture)
+  {
+    return MetallicValue * MetallicTexture.Sample(MetallicTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).r;
+  }
+  else
+  {
+    return MetallicValue;
+  }
+}
+
+float GetReflectance()
+{
+  return 0.5f;
+}
+
+float GetRoughness()
+{
+  float roughness = 0;
+
+  [branch]
+  if (UseRMATexture)
+  {
+    roughness = RoughnessValue * OrmTexture.Sample(OrmTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).r;
+  }
+  else if (UseORMTexture)
+  {
+    roughness = RoughnessValue * OrmTexture.Sample(OrmTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).g;
+  }
+  else if (UseRoughnessTexture)
+  {
+    roughness = RoughnessValue * RoughnessTexture.Sample(RoughnessTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).r;
+  }
+  else
+  {
+    roughness = RoughnessValue;
+  }
+
+  float3 worldPos = G.Input.WorldPosition.xyz;
+  float3 viewPos = normalize(GetCameraPosition() - worldPos);
+
+  roughness = roughness * ((FresnelStrength + 1.0) * (dot(G.Input.Normal,viewPos)));
+
+  return roughness;
+}
+
+float GetOpacity()
+{
+  float opacity = BaseColor.a * GetInstanceData().Color.a;
+
+  [branch]
+  if (UseBaseTexture)
+  {
+    opacity *= BaseTexture.Sample(BaseTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).a;
+  }
+
+  float3 worldPos = G.Input.WorldPosition.xyz;
+  float3 viewPos = normalize(GetCameraPosition() - worldPos);
+
+  opacity = saturate(opacity + ((1.0 - dot(G.Input.Normal,viewPos)) * FresnelStrength));
+
+  #if BLEND_MODE == BLEND_MODE_MASKED
+    return opacity - MaskThreshold;
+  #else
+    return opacity;
+  #endif
+}
+
+float3 GetEmissiveColor()
+{
+  [branch]
+  if (UseEmissiveTexture)
+  {
+    return EmissiveTexture.Sample(EmissiveTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).rgb * EmissiveColor.rgb;
+  }
+  else
+  {
+    return EmissiveColor.rgb;
+  }
+}
+
+float GetOcclusion()
+{
+  float occlusion = 1.0;
+  [branch]
+  if (UseRMATexture)
+  {
+    occlusion =  OrmTexture.Sample(OrmTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).b;
+  }
+  else if (UseORMTexture)
+  {
+    occlusion = OrmTexture.Sample(OrmTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).r;
+  }
+  else if (UseOcclusionTexture) 
+  {
+    occlusion = OcclusionTexture.Sample(OcclusionTexture_AutoSampler, G.Input.TexCoord0.xy * Scale).r;
+  }
+  else
+  {
+    return 1.0f;
+  }
+
+  if(InvertOcclusion)
+  {
+    occlusion = 1.0 - occlusion;
+  }
+
+  return occlusion;
+}
+
+void GetBlurParams(out float samples, out float multiplier)
+{
+    samples = BlurSamples;
+    multiplier = BlurMultiplier;
+}
+
+float4 GetRefractionColor()
+{
+  float opacity = RefractionOpacity;
+  if(UseExistingOpacityInRefraction)
+  {
+    opacity = GetOpacity();
+  }
+  return CalculateRefractionBlur(G.Input.WorldPosition.xyz, G.Input.Normal.xyz, RefractionIoR, RefractionThickness, RefractionColor, BlurSamples, BlurMultiplier, opacity);
+}

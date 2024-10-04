@@ -1,0 +1,152 @@
+#include <Foundation/FoundationPCH.h>
+
+#include <Foundation/IO/Archive/ArchiveBuilder.h>
+#include <Foundation/IO/Archive/ArchiveUtils.h>
+#include <Foundation/IO/CompressedStreamZstd.h>
+#include <Foundation/IO/FileSystem/FileWriter.h>
+#include <Foundation/IO/OSFile.h>
+#include <Foundation/Logging/Log.h>
+#include <Foundation/Time/Stopwatch.h>
+
+void plArchiveBuilder::AddFolder(plStringView sAbsFolderPath, plArchiveCompressionMode defaultMode /*= plArchiveCompressionMode::Uncompressed*/, InclusionCallback callback /*= InclusionCallback()*/)
+{
+#if PL_ENABLED(PL_SUPPORTS_FILE_ITERATORS)
+  plFileSystemIterator fileIt;
+
+  plStringBuilder sBasePath = sAbsFolderPath;
+  sBasePath.MakeCleanPath();
+
+  plStringBuilder fullPath;
+  plStringBuilder relPath;
+
+  for (fileIt.StartSearch(sBasePath, plFileSystemIteratorFlags::ReportFilesRecursive); fileIt.IsValid(); fileIt.Next())
+  {
+    const auto& stat = fileIt.GetStats();
+
+    stat.GetFullPath(fullPath);
+    relPath = fullPath;
+
+    if (relPath.MakeRelativeTo(sBasePath).Succeeded())
+    {
+      plArchiveCompressionMode compression = defaultMode;
+      plInt32 iCompressionLevel = 0;
+
+      if (callback.IsValid())
+      {
+        switch (callback(fullPath))
+        {
+          case InclusionMode::Exclude:
+            continue;
+
+          case InclusionMode::Uncompressed:
+            compression = plArchiveCompressionMode::Uncompressed;
+            break;
+
+#  ifdef BUILDSYSTEM_ENABLE_ZSTD_SUPPORT
+          case InclusionMode::Compress_zstd_fastest:
+            compression = plArchiveCompressionMode::Compressed_zstd;
+            iCompressionLevel = static_cast<plInt32>(plCompressedStreamWriterZstd::Compression::Fastest);
+            break;
+          case InclusionMode::Compress_zstd_fast:
+            compression = plArchiveCompressionMode::Compressed_zstd;
+            iCompressionLevel = static_cast<plInt32>(plCompressedStreamWriterZstd::Compression::Fast);
+            break;
+          case InclusionMode::Compress_zstd_average:
+            compression = plArchiveCompressionMode::Compressed_zstd;
+            iCompressionLevel = static_cast<plInt32>(plCompressedStreamWriterZstd::Compression::Average);
+            break;
+          case InclusionMode::Compress_zstd_high:
+            compression = plArchiveCompressionMode::Compressed_zstd;
+            iCompressionLevel = static_cast<plInt32>(plCompressedStreamWriterZstd::Compression::High);
+            break;
+          case InclusionMode::Compress_zstd_highest:
+            compression = plArchiveCompressionMode::Compressed_zstd;
+            iCompressionLevel = static_cast<plInt32>(plCompressedStreamWriterZstd::Compression::Highest);
+            break;
+#  endif
+        }
+      }
+
+      auto& e = m_Entries.ExpandAndGetRef();
+      e.m_sAbsSourcePath = fullPath;
+      e.m_sRelTargetPath = relPath;
+      e.m_CompressionMode = compression;
+      e.m_iCompressionLevel = iCompressionLevel;
+    }
+  }
+
+#else
+  PL_IGNORE_UNUSED(sAbsFolderPath);
+  PL_IGNORE_UNUSED(defaultMode);
+  PL_IGNORE_UNUSED(callback);
+  PL_ASSERT_NOT_IMPLEMENTED;
+#endif
+}
+
+plResult plArchiveBuilder::WriteArchive(plStringView sFile) const
+{
+  PL_LOG_BLOCK("WriteArchive", sFile);
+
+  plFileWriter file;
+  if (file.Open(sFile, 1024 * 1024 * 16).Failed())
+  {
+    plLog::Error("Could not open file for writing archive to: '{}'", sFile);
+    return PL_FAILURE;
+  }
+
+  return WriteArchive(file);
+}
+
+plResult plArchiveBuilder::WriteArchive(plStreamWriter& inout_stream) const
+{
+  PL_SUCCEED_OR_RETURN(plArchiveUtils::WriteHeader(inout_stream));
+
+  plArchiveTOC toc;
+
+  plStringBuilder sHashablePath;
+
+  plUInt64 uiStreamSize = 0;
+  const plUInt32 uiNumEntries = m_Entries.GetCount();
+
+  plStopwatch sw;
+
+  for (plUInt32 i = 0; i < uiNumEntries; ++i)
+  {
+    const SourceEntry& e = m_Entries[i];
+
+    const plUInt32 uiPathStringOffset = toc.AddPathString(e.m_sRelTargetPath);
+
+    sHashablePath = e.m_sRelTargetPath;
+    sHashablePath.ToLower();
+
+    toc.m_PathToEntryIndex[plArchiveStoredString(plHashingUtils::StringHash(sHashablePath), uiPathStringOffset)] = toc.m_Entries.GetCount();
+
+    if (!WriteNextFileCallback(i + 1, uiNumEntries, e.m_sAbsSourcePath))
+      return PL_FAILURE;
+
+    plArchiveEntry& tocEntry = toc.m_Entries.ExpandAndGetRef();
+
+    PL_SUCCEED_OR_RETURN(plArchiveUtils::WriteEntryOptimal(inout_stream, e.m_sAbsSourcePath, uiPathStringOffset, e.m_CompressionMode, e.m_iCompressionLevel, tocEntry, uiStreamSize, plMakeDelegate(&plArchiveBuilder::WriteFileProgressCallback, this)));
+
+    WriteFileResultCallback(i + 1, uiNumEntries, e.m_sAbsSourcePath, tocEntry.m_uiUncompressedDataSize, tocEntry.m_uiStoredDataSize, sw.Checkpoint());
+  }
+
+  PL_SUCCEED_OR_RETURN(plArchiveUtils::AppendTOC(inout_stream, toc));
+
+  return PL_SUCCESS;
+}
+
+bool plArchiveBuilder::WriteNextFileCallback(plUInt32 uiCurEntry, plUInt32 uiMaxEntries, plStringView sSourceFile) const
+{
+  PL_IGNORE_UNUSED(uiCurEntry);
+  PL_IGNORE_UNUSED(uiMaxEntries);
+  PL_IGNORE_UNUSED(sSourceFile);
+  return true;
+}
+
+bool plArchiveBuilder::WriteFileProgressCallback(plUInt64 bytesWritten, plUInt64 bytesTotal) const
+{
+  PL_IGNORE_UNUSED(bytesWritten);
+  PL_IGNORE_UNUSED(bytesTotal);
+  return true;
+}

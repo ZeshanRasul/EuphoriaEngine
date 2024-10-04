@@ -1,0 +1,154 @@
+[PLATFORMS]
+ALL
+
+[PERMUTATIONS]
+
+BLEND_MODE
+RENDER_PASS
+SHADING_MODE
+TWO_SIDED
+FLIP_WINDING
+FORWARD_PASS_WRITE_DEPTH
+MSAA
+CAMERA_MODE
+SHADING_QUALITY
+VERTEX_SKINNING
+VERTEX_SHADER_RENDER_TARGET_ARRAY_INDEX
+GAMEOBJECT_VELOCITY
+
+[MATERIALPARAMETER]
+
+Permutation BLEND_MODE;
+Permutation SHADING_MODE;
+Permutation TWO_SIDED;
+
+Color BaseColor @Default(Color(0.11, 0.48, 1.0, 0.8));
+
+float WaveSpeed @Default(0.5);
+float2 WaveDirectionA @Default(float2(1.0f,1.0f)) @Group("WaveA");
+float WaveSteepnessA @Default(0.35);
+float WaveLengthA @Default(3.0);
+float2 WaveDirectionB @Default(float2(1.0f,1.0f)) @Group("WaveB");
+float WaveSteepnessB @Default(0.35);
+float WaveLengthB @Default(3.0);
+float2 WaveDirectionC @Default(float2(1.0f,1.0f)) @Group("WaveC");
+float WaveSteepnessC @Default(0.35);
+float WaveLengthC @Default(3.0);
+ 
+
+[RENDERSTATE]
+#include <Shaders/Materials/MaterialState.h>
+
+[SHADER]
+#define USE_NORMAL
+#define USE_TANGENT
+#define USE_TEXCOORD0
+
+#if VERTEX_SKINNING
+  #define USE_SKINNING
+#endif
+
+#if RENDER_PASS == RENDER_PASS_EDITOR
+  #define USE_DEBUG_INTERPOLATOR
+#endif
+
+
+#include <Shaders/Common/GlobalConstants.h>
+
+CONSTANT_BUFFER(plMaterialConstants, 1)
+{
+  COLOR4F(BaseColor);
+  FLOAT2(WaveDirectionA);
+  FLOAT1(WaveSteepnessA);
+  FLOAT1(WaveLengthA);
+  FLOAT2(WaveDirectionB);
+  FLOAT1(WaveSteepnessB);
+  FLOAT1(WaveLengthB);
+  FLOAT2(WaveDirectionC);
+  FLOAT1(WaveSteepnessC);
+  FLOAT1(WaveLengthC);
+  FLOAT1(WaveSpeed);
+};
+
+[VERTEXSHADER]
+
+#include <Shaders/Materials/MaterialVertexShader.h>
+
+VS_OUT main(VS_IN Input)
+{
+  VS_OUT Output = FillVertexData(Input);
+  return Output;
+}
+
+
+[GEOMETRYSHADER]
+#include <Shaders/Materials/MaterialStereoGeometryShader.h>
+
+
+[PIXELSHADER]
+
+#define USE_NORMAL
+#define USE_TANGENT
+#define USE_TEXCOORD0
+#define USE_TWO_SIDED_LIGHTING
+#define USE_DECALS
+#define USE_FOG
+
+#if GAMEOBJECT_VELOCITY
+  #define USE_VELOCITY
+#endif
+
+#if RENDER_PASS == RENDER_PASS_EDITOR
+  #define USE_DEBUG_INTERPOLATOR
+#endif
+
+#include <Shaders/Materials/MaterialPixelShader.h>
+
+float3 GetNormal()
+{
+  return G.Input.Normal;
+}
+
+float3 GetDiffuseColor()
+{
+  float3 baseColor = BaseColor.rgb * GetInstanceData().Color.rgb;
+  return baseColor;
+}
+
+float3 GetSpecularColor()
+{
+  return 1.0f;
+}
+
+float GetMetallic()
+{
+  return 0.0f;
+}
+
+float GetReflectance()
+{
+  return 0.5f;
+}
+
+float GetRoughness()
+{
+  float roughness = 0.3;
+  return roughness;
+}
+
+float GetOpacity()
+{
+  float opacity = BaseColor.a * GetInstanceData().Color.a;
+  return opacity;
+}
+
+float3 GetEmissiveColor()
+{
+  return float3(0,0,0);
+}
+
+float GetOcclusion()
+{
+  float occlusion = 1.0;
+  return occlusion;
+}
