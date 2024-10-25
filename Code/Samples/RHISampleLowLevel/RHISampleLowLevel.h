@@ -4,7 +4,11 @@
 #include <Foundation/Application/Application.h>
 #include <Foundation/Types/UniquePtr.h>
 
+#include <RHI/Types/BasicTypes.h>
+
 class plRHISampleWindow;
+class plRHIInstance;
+class plRHIAdapter;
 
 constexpr plUInt32 FRAME_COUNT = 3;
 
@@ -25,4 +29,10 @@ public:
 
 private:
   plRHISampleWindow* m_pWindow = nullptr;
+
+  plSharedPtr<plRHIInstance> m_pInstance;
+  plSharedPtr<plRHIAdapter> m_pAdapter;
+  plSharedPtr<plRHIDevice> m_pDevice;
+
+  plRHIRenderDeviceDesc m_RenderDeviceDesc;
 };

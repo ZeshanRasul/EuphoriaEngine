@@ -10,6 +10,9 @@
 
 #include <Core/System/Window.h>
 
+#include <RHI/Instance/Instance.h>
+#include <RHI/Adapter/Adapter.h>
+
 static plUInt32 g_uiWindowWidth = 640;
 static plUInt32 g_uiWindowHeight = 480;
 
@@ -64,8 +67,6 @@ void plRHISampleApp::AfterCoreSystemsStartup()
   plGlobalLog::AddLogWriter(plLogWriter::Console::LogMessageHandler);
   plGlobalLog::AddLogWriter(plLogWriter::VisualStudio::LogMessageHandler);
 
-  plPlugin::LoadPlugin("plasmaInspectorPlugin").IgnoreResult();
-
   // Register Input
   {
     plInputActionConfig cfg;
@@ -75,13 +76,29 @@ void plRHISampleApp::AfterCoreSystemsStartup()
     plInputManager::SetInputActionConfig("Main", "CloseApp", cfg, true);
   }
 
+  plRHIApiType apiType = plRHIApiType::kVulkan;
+
+  plString sApiName;
+  switch (apiType)
+  {
+    case plRHIApiType::kVulkan:
+    {
+        sApiName = "Vulkan";
+        break;
+    }
+    default:
+    {
+        sApiName = "Unknown";
+        break;
+    }
+  }
 
   // Create a window for rendering
   {
     plWindowCreationDesc WindowCreationDesc;
     WindowCreationDesc.m_Resolution.width = g_uiWindowWidth;
     WindowCreationDesc.m_Resolution.height = g_uiWindowHeight;
-    WindowCreationDesc.m_Title = "RHISample";
+    WindowCreationDesc.m_Title = plStringBuilder("RHISample", sApiName);
     WindowCreationDesc.m_bShowMouseCursor = true;
     WindowCreationDesc.m_bClipMouseCursor = false;
     WindowCreationDesc.m_WindowMode = plWindowMode::WindowResizable;
@@ -89,7 +106,16 @@ void plRHISampleApp::AfterCoreSystemsStartup()
     m_pWindow->Initialize(WindowCreationDesc).IgnoreResult();
   }
 
-  
+  m_RenderDeviceDesc.m_ApiType = apiType;
+  m_RenderDeviceDesc.m_uiFrameCount = FRAME_COUNT;
+  m_RenderDeviceDesc.m_bRoundFPS = false;
+  m_RenderDeviceDesc.m_bVSync = true;
+
+  m_pInstance = plRHIInstanceFactory::CreateInstance(m_RenderDeviceDesc.m_ApiType);
+  m_pAdapter = std::move(m_pInstance->EnumerateAdapters()[m_RenderDeviceDesc.m_uiRequiredGpuIndex]);
+  m_pDevice = m_pAdapter->CreateDevice();
+
+  plLog::Info("GPU Name {0}", m_pAdapter->GetName());
 
   // now that we have a window and m_pDevice, tell the engine to initialize the rendering infrastructure
   plStartup::StartupHighLevelSystems();

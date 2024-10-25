@@ -1,13 +1,7 @@
 #pragma once
 #include <RHI/RHIDLL.h>
 
-enum class plRHIApiType
-{
-  kVulkan,
-  kDX12,
-  kMetal,
-  kWebGPU
-};
+#include <RHI/Adapter/Adapter.h>
 
 class plRHIInstance;
 
@@ -17,6 +11,8 @@ class PL_RHI_DLL plRHIInstance : public plRefCounted
 {
 public:
     virtual ~plRHIInstance() = default;
+	virtual plDynamicArray<plSharedPtr<plRHIAdapter>> EnumerateAdapters() = 0;
+
 };
 
 struct PL_RHI_DLL plRHIInstanceFactory
